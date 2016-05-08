@@ -78,7 +78,7 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
         var path = '/' + config.version + '/private/' + method;
         var url = config.url + path;
 
-        params.nonce = new Date() * 100; // spoof 10th of a microsecond
+        params.nonce = Date.now() * 1000; // spoof 1000th of a microsecond
 
         var signature = getMessageSignature(path, params, params.nonce);
 
