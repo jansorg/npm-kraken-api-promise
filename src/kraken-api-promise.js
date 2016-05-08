@@ -5,6 +5,7 @@ var querystring = require('querystring');
 
 /**
  * KrakenClient connects to the Kraken.com API
+ *
  * @param {String} key    API Key
  * @param {String} secret API Secret
  * @param {Number} [timeoutMillis]  Server response timeout in milliseconds (optional, default: 5000 ms)
@@ -13,6 +14,7 @@ var querystring = require('querystring');
  */
 function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis) {
     var self = this;
+    var nonce = new Date() * 1000; // spoof microsecond
 
     var config = {
         url: 'https://api.kraken.com',
@@ -34,7 +36,10 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
     function api(method, params) {
         var methods = {
             public: ['Time', 'Assets', 'AssetPairs', 'Ticker', 'Depth', 'Trades', 'Spread', 'OHLC'],
-            private: ['Balance', 'TradeBalance', 'OpenOrders', 'ClosedOrders', 'QueryOrders', 'TradesHistory', 'QueryTrades', 'OpenPositions', 'Ledgers', 'QueryLedgers', 'TradeVolume', 'AddOrder', 'CancelOrder', 'DepositMethods', 'DepositAddresses', 'DepositStatus', 'WithdrawInfo', 'Withdraw', 'WithdrawStatus', 'WithdrawCancel'],
+            private: ['Balance', 'TradeBalance', 'OpenOrders', 'ClosedOrders', 'QueryOrders', 'TradesHistory',
+                'QueryTrades', 'OpenPositions', 'Ledgers', 'QueryLedgers', 'TradeVolume', 'AddOrder', 'CancelOrder',
+                'DepositMethods', 'DepositAddresses', 'DepositStatus', 'WithdrawInfo', 'Withdraw', 'WithdrawStatus',
+                'WithdrawCancel'],
             withoutRetry: ['AddOrder', 'CancelOrder', 'Withdraw', 'WithdrawCancel']
         };
 
@@ -78,7 +83,7 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
         var path = '/' + config.version + '/private/' + method;
         var url = config.url + path;
 
-        params.nonce = Date.now() * 1000; // spoof 1000th of a microsecond
+        params.nonce = nonce++;
 
         var signature = getMessageSignature(path, params, params.nonce);
 
