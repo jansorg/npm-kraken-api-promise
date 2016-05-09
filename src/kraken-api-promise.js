@@ -2,6 +2,7 @@ var Promise = require("bluebird");
 var request = require('requestretry');
 var crypto = require('crypto');
 var querystring = require('querystring');
+var Queue = require('promise-queue-rate-limited');
 
 /**
  * KrakenClient connects to the Kraken.com API
@@ -11,8 +12,9 @@ var querystring = require('querystring');
  * @param {Number} [timeoutMillis]  Server response timeout in milliseconds (optional, default: 5000 ms)
  * @param {Number} [retryAttepms]  Retries after server connction errors
  * @param {Number} [retryDelayMillis]  Delay between retry attempts
+ * @param {Number} [requestsPerSecond]  Requests per seconds. If specified and >= 0 then a rate-limited queue will be used internally to execute the requests. Of <= 0 then no queue will be used.
  */
-function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis) {
+function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis, requestsPerSecond) {
     var self = this;
     var nonce = new Date() * 1000; // spoof microsecond
 
@@ -24,8 +26,14 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
         secret: secret,
         timeoutMS: timeoutMillis || 5000,
         maxRetryAttempts: retryAttepms || 5,
-        retryDelayMillis: retryDelayMillis || 5000
+        retryDelayMillis: retryDelayMillis || 5000,
+        requestsPerSecond: requestsPerSecond && requestsPerSecond > 0 ? requestsPerSecond : null
     };
+
+    var queue = config.requestsPerSecond ? new Queue(config.requestsPerSecond) : null;
+    if (queue) {
+        queue.start();
+    }
 
     /**
      * This method makes a public or private API request.
@@ -123,62 +131,71 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
      * @return {Promise} A promise which will resolve to the servers response.
      */
     function rawRequest(url, headers, params, retryStrategy) {
-        return new Promise(function (resolve, reject) {
-            // Set custom User-Agent string
-            headers['User-Agent'] = config.userAgent;
+        function doRawRequest() {
+            return new Promise(function (resolve, reject) {
+                // Set custom User-Agent string
+                headers['User-Agent'] = config.userAgent;
 
-            var options = {
-                url: url,
-                method: 'POST',
-                headers: headers,
-                form: params,
-                timeout: config.timeoutMS,
-                // The below parameters are specific to request-retry
-                maxAttempts: config.maxRetryAttempts,
-                retryDelay: config.retryDelayMillis,
-                retryStrategy: retryStrategy || request.RetryStrategies.NetworkError // retry only on network erros, avoid possibly duplicate requests on http errors
-            };
+                var options = {
+                    url: url,
+                    method: 'POST',
+                    headers: headers,
+                    form: params,
+                    timeout: config.timeoutMS,
+                    // The below parameters are specific to request-retry
+                    maxAttempts: config.maxRetryAttempts,
+                    retryDelay: config.retryDelayMillis,
+                    retryStrategy: retryStrategy || request.RetryStrategies.NetworkError // retry only on network erros, avoid possibly duplicate requests on http errors
+                };
 
-            request(options, function (error, response, body) {
-                if (error) {
-                    reject(new Error('Error in server response: ' + JSON.stringify(error)));
-                    return;
-                }
-
-                var data;
-                try {
-                    data = JSON.parse(body);
-                }
-                catch (e) {
-                    reject(new Error('Could not understand response from server.'));
-                    return;
-                }
-
-                //If any errors occured, Kraken will give back an array with error strings under
-                //the key "error". We should then propagate back the error message as a proper error.
-                if (data.error && data.error.length) {
-                    var krakenError = null;
-                    data.error.forEach(function (element) {
-                        if (element.charAt(0) === "E") {
-                            krakenError = element.substr(1);
-                            return false;
-                        }
-                    });
-                    if (krakenError) {
-                        reject(new Error('Kraken API returned error: ' + krakenError));
+                request(options, function (error, response, body) {
+                    if (error) {
+                        reject(new Error('Error in server response: ' + JSON.stringify(error)));
+                        return;
                     }
-                }
-                else {
-                    resolve(data.result, data);
-                }
+
+                    var data;
+                    try {
+                        data = JSON.parse(body);
+                    }
+                    catch (e) {
+                        reject(new Error('Could not understand response from server.'));
+                        return;
+                    }
+
+                    //If any errors occured, Kraken will give back an array with error strings under
+                    //the key "error". We should then propagate back the error message as a proper error.
+                    if (data.error && data.error.length) {
+                        var krakenError = null;
+                        data.error.forEach(function (element) {
+                            if (element.charAt(0) === "E") {
+                                krakenError = element.substr(1);
+                                return false;
+                            }
+                        });
+                        if (krakenError) {
+                            reject(new Error('Kraken API returned error: ' + krakenError));
+                        }
+                    }
+                    else {
+                        resolve(data.result, data);
+                    }
+                });
             });
-        });
+        }
+
+        if (queue) {
+            return queue.append(() => {
+                return doRawRequest();
+            });
+        }
+
+        return doRawRequest();
     }
 
     self.api = api;
     self.publicMethod = publicMethod;
     self.privateMethod = privateMethod;
 }
-
 
 module.exports = KrakenClient;
