@@ -13,7 +13,7 @@ var Queue = require('promise-queue-rate-limited');
  * @param {Number} [retryAttepms]  Retries after server connction errors
  * @param {Number} [retryDelayMillis]  Delay between retry attempts
  * @param {Number} [requestsPerSecond]  Requests per seconds. If specified and >= 0 then a rate-limited queue will be used internally to execute the requests. Of <= 0 then no queue will be used.
- * @param logger
+ * @param logger - An optional logger which has an info method to log the kraken-api requests
  */
 function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis, requestsPerSecond, logger) {
     var self = this;
@@ -43,10 +43,10 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
      * @return {Promise}            A promise which will resolve to the servers reponse
      */
     function api(method, params) {
-        if (logger){
-            logger.debug("kraken-api", method, params);
+        if (logger) {
+            logger.info("kraken-api", {method: method, params: params});
         }
-        
+
         var methods = {
             public: ['Time', 'Assets', 'AssetPairs', 'Ticker', 'Depth', 'Trades', 'Spread', 'OHLC'],
             private: ['Balance', 'TradeBalance', 'OpenOrders', 'ClosedOrders', 'QueryOrders', 'TradesHistory',
@@ -183,6 +183,10 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
                         }
                     }
                     else {
+                        if (logger && logger.silly) {
+                            logger.silly("kraken-api", {url: url, data: data});
+                        }
+
                         resolve(data.result, data);
                     }
                 });

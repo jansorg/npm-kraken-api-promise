@@ -1,6 +1,6 @@
 {
   "name": "kraken-api-promise",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "description": "Kraken API which uses the Bluebird promise library",
   "repository": {
     "type": "git",
@@ -15,11 +15,11 @@
   ],
   "main": "src/kraken-api-promise.js",
   "dependencies": {
-    "crypto": "0.0.3",
-    "bluebird": "3.3.5",
-    "requestretry": "1.7.0",
-    "querystring": "0.2.0",
-    "promise-queue-rate-limited": "0.3.0"
+    "crypto": "^0.0.3",
+    "bluebird": "^3.3.5",
+    "requestretry": "^1.7.0",
+    "querystring": "^0.2.0",
+    "promise-queue-rate-limited": "^0.3.0"
   },
   "devDependencies": {
     "tape": "4.5.1"
