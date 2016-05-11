@@ -13,8 +13,9 @@ var Queue = require('promise-queue-rate-limited');
  * @param {Number} [retryAttepms]  Retries after server connction errors
  * @param {Number} [retryDelayMillis]  Delay between retry attempts
  * @param {Number} [requestsPerSecond]  Requests per seconds. If specified and >= 0 then a rate-limited queue will be used internally to execute the requests. Of <= 0 then no queue will be used.
+ * @param logger
  */
-function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis, requestsPerSecond) {
+function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis, requestsPerSecond, logger) {
     var self = this;
     var nonce = new Date() * 1000; // spoof microsecond
 
@@ -42,6 +43,10 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
      * @return {Promise}            A promise which will resolve to the servers reponse
      */
     function api(method, params) {
+        if (logger){
+            logger.debug("kraken-api", method, params);
+        }
+        
         var methods = {
             public: ['Time', 'Assets', 'AssetPairs', 'Ticker', 'Depth', 'Trades', 'Spread', 'OHLC'],
             private: ['Balance', 'TradeBalance', 'OpenOrders', 'ClosedOrders', 'QueryOrders', 'TradesHistory',
