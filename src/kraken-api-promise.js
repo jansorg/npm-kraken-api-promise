@@ -12,7 +12,7 @@ var Queue = require('promise-queue-rate-limited');
  * @param {Number} [timeoutMillis]  Server response timeout in milliseconds (optional, default: 5000 ms)
  * @param {Number} [retryAttepms]  Retries after server connction errors
  * @param {Number} [retryDelayMillis]  Delay between retry attempts
- * @param {Number} [requestsPerSecond]  Requests per seconds. If specified and >= 0 then a rate-limited queue will be used internally to execute the requests. Of <= 0 then no queue will be used.
+ * @param {Number} [requestsPerSecond]  Requests per seconds. If specified and > 0 then a rate-limited queue will be used internally to execute the requests. Of <= 0 then no queue will be used.
  * @param logger - An optional logger which has an info method to log the kraken-api requests
  */
 function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis, requestsPerSecond, logger) {
@@ -31,7 +31,10 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
         requestsPerSecond: requestsPerSecond && requestsPerSecond > 0 ? requestsPerSecond : null
     };
 
-    var queue = config.requestsPerSecond ? new Queue(config.requestsPerSecond) : null;
+    const queue = config.requestsPerSecond && config.requestsPerSecond > 0
+        ? new Queue(config.requestsPerSecond)
+        : null;
+
     if (queue) {
         queue.start();
     }
@@ -43,7 +46,7 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
      * @return {Promise}            A promise which will resolve to the servers reponse
      */
     function api(method, params) {
-        if (logger) {
+        if (logger && logger.info) {
             logger.info("kraken-api", {method: method, params: params});
         }
 
@@ -162,8 +165,7 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
                     var data;
                     try {
                         data = JSON.parse(body);
-                    }
-                    catch (e) {
+                    } catch (e) {
                         reject(new Error('Could not understand response from server.'));
                         return;
                     }
@@ -194,11 +196,16 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
         }
 
         if (queue) {
+            if (logger && logger.debug) {
+                logger.debug("kraken-api: queuing new request");
+            }
+
             return queue.append(() => {
                 return doRawRequest();
             });
         }
 
+        logger.debug("kraken-api: new request, no queue");
         return doRawRequest();
     }
 
