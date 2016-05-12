@@ -141,7 +141,6 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
     function rawRequest(url, headers, params, retryStrategy) {
         function doRawRequest() {
             return new Promise(function (resolve, reject) {
-                // Set custom User-Agent string
                 headers['User-Agent'] = config.userAgent;
 
                 var options = {
@@ -150,7 +149,7 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
                     headers: headers,
                     form: params,
                     timeout: config.timeoutMS,
-                    // The below parameters are specific to request-retry
+                    // The parameters below are specific to request-retry
                     maxAttempts: config.maxRetryAttempts,
                     retryDelay: config.retryDelayMillis,
                     retryStrategy: retryStrategy || request.RetryStrategies.NetworkError // retry only on network erros, avoid possibly duplicate requests on http errors
@@ -166,7 +165,7 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
                     try {
                         data = JSON.parse(body);
                     } catch (e) {
-                        reject(new Error('Could not understand response from server.'));
+                        reject(new Error('Could not parse response from server. Exception: ' + e));
                         return;
                     }
 
@@ -180,6 +179,7 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
                                 return false;
                             }
                         });
+
                         if (krakenError) {
                             reject(new Error('Kraken API returned error: ' + krakenError));
                         }
