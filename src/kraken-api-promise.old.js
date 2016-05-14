@@ -2,7 +2,7 @@ var Promise = require("bluebird");
 var request = require('requestretry');
 var crypto = require('crypto');
 var querystring = require('querystring');
-var Queue = require('promise-queue-rate-limited');
+const Queue = require('./weightedPromiseQueue.js');
 
 /**
  * KrakenClient connects to the Kraken.com API
@@ -12,12 +12,39 @@ var Queue = require('promise-queue-rate-limited');
  * @param {Number} [timeoutMillis]  Server response timeout in milliseconds (optional, default: 5000 ms)
  * @param {Number} [retryAttepms]  Retries after server connction errors
  * @param {Number} [retryDelayMillis]  Delay between retry attempts
- * @param {Number} [requestsPerSecond]  Requests per seconds. If specified and > 0 then a rate-limited queue will be used internally to execute the requests. Of <= 0 then no queue will be used.
- * @param logger - An optional logger which has an info method to log the kraken-api requests
+ * @param {winston.Logger} logger - An optional logger which has an info method to log the kraken-api requests
+ * @param {number} [tierLevel=2] - Ther tier level, default is 2
  */
-function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis, requestsPerSecond, logger) {
-    var self = this;
+function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis, logger, tierLevel) {
+    if (tierLevel < 2 || tierLevel > 4) {
+        throw new Error("Unsupported tier level " + tierLevel);
+    }
+
+    const self = this;
     var nonce = new Date() * 1000; // spoof microsecond
+
+    const tierConfigurations = {
+        2: {
+            maxPoints: 15,
+            intervalMillis: 3000,
+            reductionPerInterval: 1
+        },
+        3: {
+            maxPoints: 20,
+            intervalMillis: 2000,
+            reductionPerInterval: 1
+        },
+        4: {
+            maxPoints: 20,
+            intervalMillis: 1000,
+            reductionPerInterval: 1
+        }
+    };
+
+    const tierConfig = tierConfigurations[tierLevel || 2];
+
+    const queue = new Queue(tierConfig.maxPoints, tierConfig.intervalMillis, tierConfig.reductionPerInterval, logger);
+    queue.start();
 
     var config = {
         url: 'https://api.kraken.com',
@@ -27,30 +54,44 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
         secret: secret,
         timeoutMS: timeoutMillis || 5000,
         maxRetryAttempts: retryAttepms || 5,
-        retryDelayMillis: retryDelayMillis || 5000,
-        requestsPerSecond: requestsPerSecond && requestsPerSecond > 0 ? requestsPerSecond : null
+        retryDelayMillis: retryDelayMillis || 5000
     };
 
-    const queue = config.requestsPerSecond && config.requestsPerSecond > 0
-        ? new Queue(config.requestsPerSecond, logger)
-        : null;
+    function callRatePoints(method) {
+        const pointsPerMethod = {
+            //2 points each
+            'TradesHistory': 2,
+            'QueryTrades': 2,//unsure
+            'Ledgers': 2,
+            'QueryLedgers': 2,//unsure
+            'TradeVolume': 2,
+            'OHLC': 2,
+            //zero points each
+            'AddOrder': 0,
+            'CancelOrder': 0
+        };
 
-    if (queue) {
-        queue.start();
+        let cost = typeof(pointsPerMethod[method]) == 'undefined' ? 1 : pointsPerMethod[method];
+
+        if (logger && logger.debug) {
+            logger.debug("Cost for method", method, cost);
+        }
+
+        return cost;
     }
 
     /**
      * This method makes a public or private API request.
      * @param  {String}   method   The API method (public or private)
      * @param  {Object}   params   Arguments to pass to the api call
-     * @return {Promise}            A promise which will resolve to the servers reponse
+     * @return {Promise}  - A promise which will resolve to the servers reponse
      */
     function api(method, params) {
         if (logger && logger.info) {
-            logger.info("kraken-api queueing", {method: method, params: params});
+            logger.info("kraken-api queue", {method: method, params: params});
         }
 
-        var methods = {
+        const methods = {
             public: ['Time', 'Assets', 'AssetPairs', 'Ticker', 'Depth', 'Trades', 'Spread', 'OHLC'],
             private: ['Balance', 'TradeBalance', 'OpenOrders', 'ClosedOrders', 'QueryOrders', 'TradesHistory',
                 'QueryTrades', 'OpenPositions', 'Ledgers', 'QueryLedgers', 'TradeVolume', 'AddOrder', 'CancelOrder',
@@ -60,9 +101,15 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
         };
 
         if (methods.public.indexOf(method) !== -1) {
-            return publicMethod(method, params, true);
-        } else if (methods.private.indexOf(method) !== -1) {
-            return privateMethod(method, params, methods.withoutRetry.indexOf(method) == -1);
+            return queue.waitFor(callRatePoints(method)).then(function () {
+                return publicMethod(method, params, true);
+            });
+        }
+
+        if (methods.private.indexOf(method) !== -1) {
+            return queue.waitFor(callRatePoints(method)).then(function () {
+                return privateMethod(method, params, methods.withoutRetry.indexOf(method) == -1);
+            });
         }
 
         return Promise.reject(new Error(method + ' is not a valid API method.'));
@@ -139,88 +186,59 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
      * @return {Promise} A promise which will resolve to the servers response.
      */
     function rawRequest(url, headers, params, retryStrategy) {
-        function doRawRequest() {
-            if (logger && logger.info) {
-                logger.info("doRawRequest");
-            }
-            
-            return new Promise(function (resolve, reject) {
-                if (logger && logger.info) {
-                    logger.info("doRawRequest in promise");
+        return new Promise(function (resolve, reject) {
+            headers['User-Agent'] = config.userAgent;
+
+            var options = {
+                url: url,
+                method: 'POST',
+                headers: headers,
+                form: params,
+                timeout: config.timeoutMS,
+                // The parameters below are specific to request-retry
+                maxAttempts: config.maxRetryAttempts,
+                retryDelay: config.retryDelayMillis,
+                retryStrategy: retryStrategy || request.RetryStrategies.NetworkError // retry only on network erros, avoid possibly duplicate requests on http errors
+            };
+
+            request(options, function (error, response, body) {
+                if (error) {
+                    reject(new Error('Error in server response: ' + JSON.stringify(error)));
+                    return;
                 }
 
-                headers['User-Agent'] = config.userAgent;
-
-                var options = {
-                    url: url,
-                    method: 'POST',
-                    headers: headers,
-                    form: params,
-                    timeout: config.timeoutMS,
-                    // The parameters below are specific to request-retry
-                    maxAttempts: config.maxRetryAttempts,
-                    retryDelay: config.retryDelayMillis,
-                    retryStrategy: retryStrategy || request.RetryStrategies.NetworkError // retry only on network erros, avoid possibly duplicate requests on http errors
-                };
-
-                request(options, function (error, response, body) {
-                    if (error) {
-                        reject(new Error('Error in server response: ' + JSON.stringify(error)));
-                        return;
-                    }
-
-                    var data;
-                    try {
-                        data = JSON.parse(body);
-                    } catch (e) {
-                        reject(new Error('Could not parse response from server. Exception: ' + e));
-                        return;
-                    }
-
-                    //If any errors occured, Kraken will give back an array with error strings under
-                    //the key "error". We should then propagate back the error message as a proper error.
-                    if (data.error && data.error.length) {
-                        var krakenError = null;
-                        data.error.forEach(function (element) {
-                            if (element.charAt(0) === "E") {
-                                krakenError = element.substr(1);
-                                return false;
-                            }
-                        });
-
-                        if (krakenError) {
-                            reject(new Error('Kraken API returned error: ' + krakenError));
-                        }
-                    }
-                    else {
-                        if (logger && logger.silly) {
-                            logger.silly("kraken-api", {url: url, data: data});
-                        }
-
-                        resolve(data.result, data);
-                    }
-                });
-            });
-        }
-
-        if (queue) {
-            if (logger && logger.debug) {
-                logger.debug("kraken-api: queuing new request");
-            }
-
-            return queue.append(() => {
-                if (logger && logger.info) {
-                    logger.info("in queue append");
+                var data;
+                try {
+                    data = JSON.parse(body);
+                } catch (e) {
+                    reject(new Error('Could not parse response from server. Exception: ' + e));
+                    return;
                 }
 
-                return doRawRequest();
-            });
-        }
+                //If any errors occured, Kraken will give back an array with error strings under
+                //the key "error". We should then propagate back the error message as a proper error.
+                if (data.error && data.error.length) {
+                    var krakenError = null;
+                    data.error.forEach(function (element) {
+                        if (element.charAt(0) === "E") {
+                            krakenError = element.substr(1);
+                            return false;
+                        }
+                    });
 
-        if (logger && logger.debug) {
-            logger.debug("kraken-api: new request, no queue");
-        }
-        return doRawRequest();
+                    if (krakenError) {
+                        reject(new Error('Kraken API returned error: ' + krakenError));
+                    }
+                }
+                else {
+                    if (logger && logger.silly) {
+                        logger.silly("kraken-api", {url: url, data: data});
+                    }
+
+                    resolve(data.result, data);
+                }
+            });
+        });
     }
 
     self.api = api;
