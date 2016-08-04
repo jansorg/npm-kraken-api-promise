@@ -101,13 +101,11 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
         };
 
         if (methods.public.indexOf(method) !== -1) {
-            return queue.waitFor(callRatePoints(method)).then(function () {
+            return queue.waitFor(callRatePoints(method)).then(() => {
                 return publicMethod(method, params, true);
             });
-        }
-
-        if (methods.private.indexOf(method) !== -1) {
-            return queue.waitFor(callRatePoints(method)).then(function () {
+        } else if (methods.private.indexOf(method) !== -1) {
+            return queue.waitFor(callRatePoints(method)).then(() => {
                 return privateMethod(method, params, methods.withoutRetry.indexOf(method) == -1);
             });
         }
@@ -186,7 +184,15 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
      * @return {Promise} A promise which will resolve to the servers response.
      */
     function rawRequest(url, headers, params, retryStrategy) {
+        if (logger && logger.info) {
+            logger.info("doRawRequest");
+        }
+
         return new Promise(function (resolve, reject) {
+            if (logger && logger.info) {
+                logger.info("doRawRequest in promise");
+            }
+
             headers['User-Agent'] = config.userAgent;
 
             var options = {

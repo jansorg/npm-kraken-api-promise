@@ -19,7 +19,7 @@
     "bluebird": "^3.3.5",
     "requestretry": "^1.7.0",
     "querystring": "^0.2.0",
-    "promise-queue-rate-limited": "^0.3.0"
+    "promise-queue-rate-limited": "^0.3.1"
   },
   "devDependencies": {
     "tape": "4.5.1"
