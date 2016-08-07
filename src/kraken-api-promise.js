@@ -78,12 +78,8 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
     function publicMethod(method, params, allowRetry) {
         params = params || {};
 
-        var path = '/' + config.version + '/public/' + method;
-        var url = config.url + path;
-
-        return rawRequest(url, {}, params, allowRetry ? null : function () {
-            return false;
-        });
+        var url = config.url + '/' + config.version + '/public/' + method;
+        return rawRequest(url, {}, params, retryStrategy(allowRetry));
     }
 
     /**
@@ -101,16 +97,12 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
 
         params.nonce = nonce++;
 
-        var signature = getMessageSignature(path, params, params.nonce);
-
         var headers = {
             'API-Key': config.key,
-            'API-Sign': signature
+            'API-Sign': getMessageSignature(path, params, params.nonce)
         };
 
-        return rawRequest(url, headers, params, allowRetry ? null : function () {
-            return false;
-        });
+        return rawRequest(url, headers, params, retryStrategy(allowRetry));
     }
 
     /**
@@ -130,6 +122,19 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
         return hmac.update(path + hash_digest, 'binary').digest('base64');
     }
 
+    function retryStrategy(allowRetry) {
+        return allowRetry ? null : function () {
+            return false;
+        }
+    }
+
+    function bluebirdPromiseFactory(resolver) {
+        if (logger && logger.info) {
+            logger.info("creating new promise for request");
+        }
+        return new Promise(resolver);
+    }
+
     /**
      * This method sends the actual HTTP request
      * @param  {String}   url      The URL to make the request
@@ -143,63 +148,54 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
             if (logger && logger.info) {
                 logger.info("doRawRequest");
             }
-            
-            return new Promise(function (resolve, reject) {
-                if (logger && logger.info) {
-                    logger.info("doRawRequest in promise");
+
+            headers['User-Agent'] = config.userAgent;
+            var options = {
+                promiseFactory: bluebirdPromiseFactory,
+                fullResponse: false, // to resolve with just the response body
+                forever: true, //http keep-alive
+                strictSSL: true,
+                url: url,
+                method: 'POST',
+                headers: headers,
+                form: params,
+                timeout: config.timeoutMS,
+                // The parameters below are specific to request-retry
+                maxAttempts: config.maxRetryAttempts,
+                retryDelay: config.retryDelayMillis,
+                retryStrategy: retryStrategy || request.RetryStrategies.NetworkError // retry only on network erros, avoid possibly duplicate requests on http errors
+            };
+
+            return request(options).then(function (body) {
+                var jsonBody;
+                try {
+                    jsonBody = JSON.parse(body);
+                } catch (e) {
+                    throw new Error('Could not parse response from server. Exception: ' + e);
                 }
 
-                headers['User-Agent'] = config.userAgent;
-
-                var options = {
-                    url: url,
-                    method: 'POST',
-                    headers: headers,
-                    form: params,
-                    timeout: config.timeoutMS,
-                    // The parameters below are specific to request-retry
-                    maxAttempts: config.maxRetryAttempts,
-                    retryDelay: config.retryDelayMillis,
-                    retryStrategy: retryStrategy || request.RetryStrategies.NetworkError // retry only on network erros, avoid possibly duplicate requests on http errors
-                };
-
-                request(options, function (error, response, body) {
-                    if (error) {
-                        reject(new Error('Error in server response: ' + JSON.stringify(error)));
-                        return;
-                    }
-
-                    var data;
-                    try {
-                        data = JSON.parse(body);
-                    } catch (e) {
-                        reject(new Error('Could not parse response from server. Exception: ' + e));
-                        return;
-                    }
-
-                    //If any errors occured, Kraken will give back an array with error strings under
-                    //the key "error". We should then propagate back the error message as a proper error.
-                    if (data.error && data.error.length) {
-                        var krakenError = null;
-                        data.error.forEach(function (element) {
-                            if (element.charAt(0) === "E") {
-                                krakenError = element.substr(1);
-                                return false;
-                            }
-                        });
-
-                        if (krakenError) {
-                            reject(new Error('Kraken API returned error: ' + krakenError));
+                //If any errors occured, Kraken will give back an array with error strings under
+                //the key "error". We should then propagate back the error message as a proper error.
+                if (jsonBody && jsonBody.error && jsonBody.error.length) {
+                    var krakenError = null;
+                    jsonBody.error.forEach(function (element) {
+                        if (element.charAt(0) === "E") {
+                            krakenError = element.substr(1);
+                            return false;
                         }
-                    }
-                    else {
-                        if (logger && logger.silly) {
-                            logger.silly("kraken-api", {url: url, data: data});
-                        }
+                    });
 
-                        resolve(data.result, data);
+                    if (krakenError) {
+                        throw new Error('Kraken API returned error: ' + krakenError);
                     }
-                });
+                }
+                else {
+                    if (logger && logger.silly) {
+                        logger.silly("kraken-api", {url: url, data: jsonBody});
+                    }
+
+                    return jsonBody;
+                }
             });
         }
 
@@ -207,10 +203,9 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
             if (logger && logger.debug) {
                 logger.debug("kraken-api: queuing new request");
             }
-
             return queue.append(() => {
-                if (logger && logger.info) {
-                    logger.info("in queue append");
+                if (logger && logger.debug) {
+                    logger.debug("in queue append");
                 }
 
                 return doRawRequest();
