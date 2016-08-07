@@ -145,8 +145,8 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
      */
     function rawRequest(url, headers, params, retryStrategy) {
         function doRawRequest() {
-            if (logger && logger.info) {
-                logger.info("doRawRequest");
+            if (logger && logger.debug) {
+                logger.debug("doRawRequest");
             }
 
             headers['User-Agent'] = config.userAgent;

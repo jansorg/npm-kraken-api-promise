@@ -1,6 +1,6 @@
 {
   "name": "kraken-api-promise",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Kraken API which uses the Bluebird promise library",
   "repository": {
     "type": "git",
