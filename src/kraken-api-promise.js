@@ -129,8 +129,8 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
     }
 
     function bluebirdPromiseFactory(resolver) {
-        if (logger && logger.info) {
-            logger.info("creating new promise for request");
+        if (logger && logger.debug) {
+            logger.debug("creating new promise for request");
         }
         return new Promise(resolver);
     }
