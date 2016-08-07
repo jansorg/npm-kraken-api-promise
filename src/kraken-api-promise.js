@@ -189,13 +189,11 @@ function KrakenClient(key, secret, timeoutMillis, retryAttepms, retryDelayMillis
                         throw new Error('Kraken API returned error: ' + krakenError);
                     }
                 }
-                else {
-                    if (logger && logger.silly) {
-                        logger.silly("kraken-api", {url: url, data: jsonBody});
-                    }
 
-                    return jsonBody;
+                if (logger && logger.silly) {
+                    logger.silly("kraken-api", {url: url, result: jsonBody.result});
                 }
+                return jsonBody.result;
             });
         }
 
